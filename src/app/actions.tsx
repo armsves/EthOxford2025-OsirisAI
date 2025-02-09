@@ -10,9 +10,8 @@ import { ReactNode } from 'react';
 import { z } from 'zod';
 
 import readline from "node:readline";
-import { http, createWalletClient, parseEther, GetBalanceParameters, erc20Abi, createPublicClient } from "viem";
+import { http, createWalletClient, parseEther, GetBalanceParameters, erc20Abi, createPublicClient, formatEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { mantleSepoliaTestnet } from "viem/chains";
 import { getOnChainTools } from "@goat-sdk/adapter-vercel-ai";
 //import { Token, erc20 } from "@goat-sdk/plugin-erc20";
 //import { erc4626, Vault } from "@goat-sdk/plugin-erc4626";
@@ -23,12 +22,12 @@ import { ChainKey, createConfig, EVM } from '@lifi/sdk'
 import { ChainId, getQuote } from '@lifi/sdk'
 import { executeRoute, getRoutes, getToken } from '@lifi/sdk'
 
-import { arbitrum, mainnet, mantle, optimism, polygon, Chain, bsc } from 'viem/chains'
+import { arbitrum, mainnet, mantle, optimism, polygon, Chain, bsc, avalanche } from 'viem/chains'
 import { Route } from '@/components/routeCard';
 
 const account = privateKeyToAccount(process.env.WALLET_PRIVATE_KEY as `0x${string}`);
 const myAddress = account.address;
-const chains: Chain[] = [arbitrum, mainnet, optimism, polygon, mantle, bsc];
+const chains: Chain[] = [arbitrum, mainnet, optimism, polygon, mantle, bsc, avalanche];
 
 const client = createWalletClient({
   account,
@@ -65,7 +64,7 @@ const ChainIdMap = [
   { id: 56, name: 'Binance Smart Chain', symbol: 'BNB' },
   { id: 100, name: 'xDai', symbol: 'DAI' },
   { id: 250, name: 'Fantom', symbol: 'FTM' },
-  { id: 43114, name: 'Avalanche', symbol: 'AVA' },
+  { id: 43114, name: 'Avalanche', symbol: 'AVAX' },
   { id: 42161, name: 'Arbitrum', symbol: 'ARB' },
   { id: 10, name: 'Optimism', symbol: 'OPT' },
   { id: 8453, name: 'Base', symbol: 'BAS' },
@@ -130,46 +129,89 @@ const tools = {
   functionName: 'totalSupply',
 })
   */
- /*
-  getBalanceofToken: tool({
-    description: 'Get the balance of the token',
+  getMyWalletAddress: tool({
+    description: 'Get my wallet address',
+    parameters: z.object({}),
+    execute: async () => {
+      return myAddress;
+    },
+  }),
+  getBalance: tool({
+    description: 'Get the balance of the native token',
     parameters: z.object({
       //chainId: z.union([z.string(), z.number()]).refine((val): val is ChainKey | ChainId => {
       //  return typeof val === 'string' || typeof val === 'number';
       //}),
+      //tokenAddress: z.string().describe('The token name to get the info for'),
+      walletAddress: z.string().describe('The wallet address to get the balance for'),
+    }),
+    execute: async ({
+      //chainId, 
+      //tokenAddress, 
+      walletAddress }: {
+        //chainId: ChainKey | ChainId, 
+        //tokenAddress: string, 
+        walletAddress: string
+      }) => {
+      const balance = await publicClient.getBalance({
+        address: walletAddress as `0x${string}`,
+      })
+      const balanceAsEther = formatEther(balance)
+      console.log('el balance es: ', balanceAsEther);
+      return balanceAsEther.toString();
+    },
+  }),
+
+  getBalanceofToken: tool({
+    description: 'Get the balance of the ERC20 token on the provided chain',
+    parameters: z.object({
+      //chainId: z.union([z.string(), z.number()]).refine((val): val is ChainKey | ChainId => {
+      //  return typeof val === 'string' || typeof val === 'number';
+      //}),
+      chainId: z.number().describe('The chain ID to get the balance from'),
       tokenAddress: z.string().describe('The token name to get the info for'),
       walletAddress: z.string().describe('The wallet address to get the balance for'),
     }),
-    execute: async ({ 
-      //chainId, 
-      tokenAddress, walletAddress }: { 
-        //chainId: ChainKey | ChainId, 
-        tokenAddress: string, walletAddress: string }) => {
+    execute: async ({
+      chainId,
+      tokenAddress, walletAddress }: {
+        chainId: ChainKey | ChainId,
+        tokenAddress: string, walletAddress: string
+      }) => {
+      const chainName = chains.find((chain) => chain.id === chainId) as Chain;
+      console.log('chainName: ', chainName.nativeCurrency.name);
+      //publicClient.chain = chainName.nativeCurrency.name;
+
       const quote = await publicClient.readContract({
-        address: '0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9' as `0x${string}`,
+        address: tokenAddress as `0x${string}`,
         abi: erc20Abi,
         functionName: 'balanceOf',
         args: [walletAddress as `0x${string}`],
       })
-      console.log('el balance es: ',quote);
+      console.log('el balance es: ', quote);
       return quote.toString();
     },
   }),
-  */
+
   resolveChain: tool({
     description: 'Resolve the chain name to chain ID',
     parameters: z.object({
       chainName: z.string().describe('The chain name to resolve'),
     }),
     execute: async ({ chainName }) => {
+      try {
       const chainId = getChainIdByName(chainName);
       console.log(chainId);
       return chainId;
+      } catch (error) {
+        console.log('error: ', error);
+        return error;
+      }
     },
   }),
 
   getToken: tool({
-    description: 'Get the token info',
+    description: 'Get the token info for the provided chain',
     parameters: z.object({
       chainId: z.union([z.string(), z.number()]).refine((val): val is ChainKey | ChainId => {
         return typeof val === 'string' || typeof val === 'number';
@@ -177,9 +219,15 @@ const tools = {
       tokenAddress: z.string().describe('The token name to get the info for'),
     }),
     execute: async ({ chainId, tokenAddress }: { chainId: ChainKey | ChainId, tokenAddress: string }) => {
-      const quote = await getToken(chainId, tokenAddress);
-      console.log(quote);
-      return quote;
+      try {
+        const quote = await getToken(chainId, tokenAddress);
+        console.log(quote);
+        return quote;
+
+      } catch (error) {
+        console.log('error: ', error);
+        return error;
+      }
     },
   }),
 
@@ -194,12 +242,18 @@ const tools = {
     }),
     execute: async ({ chainId, tokenAddress, fromAmount }:
       { chainId: ChainKey | ChainId, tokenAddress: string, fromAmount: string }) => {
-      const quote = await getToken(chainId, tokenAddress);
-      console.log(quote);
-      return (Number(fromAmount) * 10 ** quote.decimals).toString();
+      try {
+        const quote = await getToken(chainId, tokenAddress);
+        console.log("token decimals here: ",quote.decimals);
+        return (Number(fromAmount) * 10 ** quote.decimals).toString();
+
+      } catch (error) {
+        console.log('error: ', error);
+        return error;
+      }
     },
   }),
-
+  /*
   getTokenDecimals: tool({
     description: 'Get the token decimals',
     parameters: z.object({
@@ -214,7 +268,7 @@ const tools = {
       return quote;
     },
   }),
-
+  */
   quote: tool({
     description: 'Get the quote',
     parameters: z.object({
@@ -242,27 +296,38 @@ const tools = {
       toChainId: z.number().describe('The chain ID to get the quote to'),
       fromTokenAddress: z.string().describe('The token name to get the route from'),
       toTokenAddress: z.string().describe('The token name to get the route to'),
-      fromAmount: z.string().describe('The amount to get the route for'),
+      fromAmount: z.string().describe('The amount to get the route for but you have to add the decimals'),
       fromAddress: z.string().describe('The address to get the funds from'),
     }),
     execute: async ({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount }:
       { fromChainId: number, toChainId: number, fromTokenAddress: string, toTokenAddress: string, fromAmount: string }) => {
 
-      const quote = await getRoutes({
-        fromChainId,
-        toChainId,
-        fromTokenAddress,//: '0x0000000000000000000000000000000000000000',
-        toTokenAddress,//: '0x0000000000000000000000000000000000000000',
-        fromAmount: '500000000000000000',//: fromAmountGood,//(Number(fromAmount)**fromTokenDecimals.decimals).toString(),//: '1000000000000000', // 10 USDC
-        fromAddress: '0x6CbAf448e3062F03A90D2f7008A5aF9ED7a8f0F9', //: myAddress,
-        //toAddress: myAddress,
-      });
+      try {
+        const token = await getToken(toChainId, fromTokenAddress);
+        console.log("token decimals here: ",token.decimals);
+        const fromAmountGood = (Number(fromAmount) * 10 ** token.decimals).toString();
 
-      if (quote && typeof quote === 'object' && 'routes' in quote && Array.isArray(quote.routes) && quote.routes.length > 0) {
-        return quote.routes[0];
-      } else {
-        return quote;
+        const quote = await getRoutes({
+          fromChainId,
+          toChainId,
+          fromTokenAddress,//: '0x0000000000000000000000000000000000000000',
+          toTokenAddress,//: '0x0000000000000000000000000000000000000000',
+          fromAmount: fromAmountGood,//: (Number(fromAmount)*10*18).toString(),//: '1000000000000000', // 10 USDC
+          fromAddress: myAddress,
+          //toAddress: myAddress,
+        });
+        if (quote && typeof quote === 'object' && 'routes' in quote && Array.isArray(quote.routes) && quote.routes.length > 0) {
+          return quote.routes[0];
+        } else {
+          return quote;
+        }
+
+      } catch (error) {
+        console.log('error: ', error);
+        return error;
       }
+
+
       //console.log('type: ',typeof quote);
       /*
       if (quote && typeof quote === 'object' && 'routes' in quote && Array.isArray(quote.routes) && quote.routes.length > 0) {
@@ -303,7 +368,7 @@ export async function continueTextConversation(messages: CoreMessage[]) {
     maxSteps: 10, // Maximum number of tool invocations per request
     messages,
     onStepFinish: (event) => {
-      console.log('tool results aqui: ',event.toolResults);
+      console.log('tool results aqui: ', event.toolResults);
     },
   });
   //console.log('result props: ',result.response);
